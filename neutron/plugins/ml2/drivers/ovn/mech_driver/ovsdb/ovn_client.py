@@ -495,15 +495,14 @@ class OVNClient:
                 port_type = ovn_const.LSP_TYPE_EXTERNAL
 
             addresses = []
-            port_security, new_macs = (
+            port_security, _ = (
                 self._get_allowed_addresses_from_port(port))
             is_vpn_gw_port = device_owner == const.DEVICE_OWNER_VPN_ROUTER_GW
             if (port_security or port_type or dhcpv4_options or
                     dhcpv6_options or is_vpn_gw_port):
                 addresses.append(address)
-                addresses.extend(new_macs)
 
-            if not port_security and not port_type:
+            if not port_type:
                 # Port security is disabled for this port.
                 # So this port can send traffic with any mac address.
                 # OVN allows any mac address from a port if "unknown"
