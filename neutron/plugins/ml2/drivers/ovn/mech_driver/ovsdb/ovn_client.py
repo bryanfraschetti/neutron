@@ -59,6 +59,7 @@ from neutron.conf.plugins.ml2.drivers.ovn.ovn_conf \
     import is_ovn_router_indirect_snat_enabled as is_nested_snat
 from neutron.db import ovn_revision_numbers_db as db_rev
 from neutron.db import segments_db
+from neutron.extensions import mac_learning
 from neutron.objects import router
 from neutron.plugins.ml2 import db as ml2_db
 from neutron.plugins.ml2.drivers.ovn.mech_driver.ovsdb.extensions \
@@ -497,18 +498,19 @@ class OVNClient:
             addresses = []
             port_security, new_macs = (
                 self._get_allowed_addresses_from_port(port))
+            mac_learning_enabled = (
+                not port_type and
+                port.get(mac_learning.MAC_LEARNING_ENABLED, False))
             is_vpn_gw_port = device_owner == const.DEVICE_OWNER_VPN_ROUTER_GW
             if (port_security or port_type or dhcpv4_options or
                     dhcpv6_options or is_vpn_gw_port):
+                # With port security enabled, addresses contains the port's
+                # real MAC/IP identity and port_security is the allowlist.
                 addresses.append(address)
-                addresses.extend(new_macs)
+                if not mac_learning_enabled:
+                    addresses.extend(new_macs)
 
-            if not port_security and not port_type:
-                # Port security is disabled for this port.
-                # So this port can send traffic with any mac address.
-                # OVN allows any mac address from a port if "unknown"
-                # is added to the Logical_Switch_Port.addresses column.
-                # So add it.
+            if not port_type and (not port_security or mac_learning_enabled):
                 addresses.append(ovn_const.UNKNOWN_ADDR)
 
         # HA Chassis Group will bind the port to the highest

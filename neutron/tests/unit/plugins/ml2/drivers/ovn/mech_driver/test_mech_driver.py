@@ -154,7 +154,7 @@ class TestOVNMechanismDriverBase(MechDriverSetupBase,
                                  test_plugin.Ml2PluginV2TestCase):
 
     _mechanism_drivers = ['logger', 'ovn']
-    _extension_drivers = ['port_security', 'dns']
+    _extension_drivers = ['port_security', 'dns', 'mac_learning']
 
     def setUp(self):
         cfg.CONF.set_override('extension_drivers',
@@ -684,6 +684,8 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                          ).call_args_list[0][1])
                     self.assertEqual(['00:00:00:00:00:01 10.0.0.2 10.0.0.4'],
                                      called_args_dict.get('port_security'))
+                    self.assertNotIn(ovn_const.UNKNOWN_ADDR,
+                                     called_args_dict.get('addresses'))
 
                     data = {'port': {'mac_address': '00:00:00:00:00:02'}}
                     req = self.new_update_request(
@@ -697,6 +699,8 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                          ).call_args_list[0][1])
                     self.assertEqual(['00:00:00:00:00:02 10.0.0.2 10.0.0.4'],
                                      called_args_dict.get('port_security'))
+                    self.assertNotIn(ovn_const.UNKNOWN_ADDR,
+                                     called_args_dict.get('addresses'))
 
     def test_create_port_with_disabled_security(self):
         # NOTE(mjozefcz): Lets pretend this is nova port to not
@@ -748,6 +752,13 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                                      called_args_dict.get('addresses'))
 
     def test_create_port_security_allowed_address_pairs(self):
+        self._test_create_port_security_allowed_address_pairs(False)
+
+    def test_create_port_security_allowed_address_pairs_mac_learning(self):
+        self._test_create_port_security_allowed_address_pairs(True)
+
+    def _test_create_port_security_allowed_address_pairs(self,
+                                                        mac_learning_enabled):
         # NOTE(mjozefcz): Lets pretend this is nova port to not
         # be treated as VIP.
         # The expected LSP.port_security field must look like this (before
@@ -782,12 +793,14 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                   [{'ip_address': ip1, 'mac_address': mac1},
                    {'ip_address': ip2, 'mac_address': mac2},
                    {'ip_address': ip3}],
+                  'mac_learning_enabled': mac_learning_enabled,
                   'device_owner': 'compute:nova'}
         with self.network() as net1:
             with self.subnet(network=net1) as subnet1:
                 with self.port(subnet=subnet1,
                                is_admin=True,
-                               arg_list=('allowed_address_pairs',),
+                               arg_list=('allowed_address_pairs',
+                                         'mac_learning_enabled'),
                                **kwargs) as port:
                     port_mac = port['port']['mac_address']
                     port_ip = port['port'].get('fixed_ips')[0]['ip_address']
@@ -804,9 +817,9 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                     self.assertEqual(psec,
                                      called_args_dict.get('port_security'))
                     addresses = tools.UnorderedList(
-                        [mac1,
-                         mac2,
-                         ' '.join([port_mac, port_ip])])
+                        [' '.join([port_mac, port_ip]),
+                         ovn_const.UNKNOWN_ADDR] if mac_learning_enabled else
+                        [mac1, mac2, ' '.join([port_mac, port_ip])])
                     self.assertEqual(addresses,
                                      called_args_dict.get('addresses'))
 
@@ -835,12 +848,33 @@ class TestOVNMechanismDriver(TestOVNMechanismDriverBase):
                     self.assertEqual(psec,
                                      called_args_dict.get('port_security'))
                     addresses = tools.UnorderedList(
-                        [mac1,
-                         mac2,
-                         port_mac,
+                        [' '.join([port_mac_new, port_ip]),
+                         ovn_const.UNKNOWN_ADDR] if mac_learning_enabled else
+                        [mac1, mac2, port_mac,
                          ' '.join([port_mac_new, port_ip])])
                     self.assertEqual(addresses,
                                      called_args_dict.get('addresses'))
+
+    def test_update_port_mac_learning(self):
+        vip_mac = '00:00:5e:00:01:01'
+        kwargs = {'allowed_address_pairs': [
+            {'ip_address': '10.0.0.100', 'mac_address': vip_mac}],
+            'device_owner': 'compute:nova'}
+        with self.port(arg_list=('allowed_address_pairs',), **kwargs) as port:
+            original = self.nb_ovn.create_lswitch_port.call_args.kwargs
+            self.assertIn(vip_mac, original['addresses'])
+            for enabled in (True, False):
+                data = {'port': {'mac_learning_enabled': enabled}}
+                response = self._update('ports', port['port']['id'], data)
+                self.assertEqual(enabled,
+                                 response['port']['mac_learning_enabled'])
+                updated = self.nb_ovn.set_lswitch_port.call_args.kwargs
+                self.assertEqual(
+                    tools.UnorderedList(original['port_security']),
+                    tools.UnorderedList(updated['port_security']))
+                self.assertEqual(
+                    enabled, ovn_const.UNKNOWN_ADDR in updated['addresses'])
+                self.assertEqual(not enabled, vip_mac in updated['addresses'])
 
     def test_create_port_aap_invalid_virtual_mac_unbound(self):
         kwargs = {'allowed_address_pairs':

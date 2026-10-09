@@ -182,6 +182,7 @@ ML2_SUPPORTED_API_EXTENSIONS = [
     port_mac_address_regenerate.ALIAS,
     port_numa_affinity_policy.ALIAS,
     port_numa_affinity_policy_socket.ALIAS,
+    'mac-learning',
     port_security.ALIAS,
     port_trusted_vif.ALIAS,
     provider_net.ALIAS,

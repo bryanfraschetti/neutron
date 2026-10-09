@@ -17,8 +17,62 @@ from neutron_lib import context
 from neutron_lib.plugins import directory
 from oslo_config import cfg
 
+from neutron.db.models import mac_learning as mac_learning_model
 from neutron.tests.unit.plugins.ml2.drivers import ext_test
 from neutron.tests.unit.plugins.ml2 import test_plugin
+
+
+class MacLearningExtensionTestCase(test_plugin.Ml2PluginV2TestCase):
+
+    _extension_drivers = ['mac_learning']
+
+    def setUp(self):
+        cfg.CONF.set_override('extension_drivers', self._extension_drivers,
+                              group='ml2')
+        super().setUp()
+
+    def test_default_and_update(self):
+        with self.port() as port:
+            port_id = port['port']['id']
+            self.assertFalse(port['port']['mac_learning_enabled'])
+            for enabled in (True, False):
+                response = self._update(
+                    'ports', port_id,
+                    {'port': {'mac_learning_enabled': enabled}})
+                self.assertEqual(enabled,
+                                 response['port']['mac_learning_enabled'])
+                self.assertEqual(enabled, self._show('ports', port_id)[
+                    'port']['mac_learning_enabled'])
+
+    def test_enabled_create_and_unrelated_update(self):
+        with self.port(arg_list=('mac_learning_enabled',),
+                       mac_learning_enabled=True) as port:
+            port_id = port['port']['id']
+            self.assertTrue(port['port']['mac_learning_enabled'])
+            response = self._update('ports', port_id,
+                                    {'port': {'name': 'renamed'}})
+            self.assertTrue(response['port']['mac_learning_enabled'])
+            self.assertTrue(self._show('ports', port_id)[
+                'port']['mac_learning_enabled'])
+            self.assertTrue(self._list('ports')[
+                'ports'][0]['mac_learning_enabled'])
+
+    def test_invalid_value(self):
+        with self.port() as port:
+            request = self.new_update_request(
+                'ports', {'port': {'mac_learning_enabled': 'invalid'}},
+                port['port']['id'])
+            self.assertEqual(400, request.get_response(self.api).status_int)
+
+    def test_delete_cascades(self):
+        with self.port(arg_list=('mac_learning_enabled',),
+                       mac_learning_enabled=True) as port:
+            port_id = port['port']['id']
+        admin_context = context.get_admin_context()
+        with admin_context.session.begin():
+            self.assertIsNone(admin_context.session.query(
+                mac_learning_model.PortMacLearning).filter_by(
+                    port_id=port_id).one_or_none())
 
 
 class ExtensionDriverTestCase(test_plugin.Ml2PluginV2TestCase):
